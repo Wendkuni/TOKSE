@@ -1,0 +1,94 @@
+name: tokse_flutter
+description: Application de signalement urbain TOKSE en Flutter
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Design
+  cupertino_icons: ^1.0.6
+  google_fonts: ^6.1.0
+  flutter_svg: ^2.0.9
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0
+  
+  # State Management
+  provider: ^6.1.1
+  flutter_riverpod: ^2.4.10
+  riverpod_annotation: ^2.3.3
+  
+  # Dependency Injection
+  get_it: ^7.6.7
+  injectable: ^2.3.2
+  
+  # Functional Programming
+  dartz: ^0.10.1
+  equatable: ^2.0.5
+  
+  # Navigation
+  go_router: ^17.0.0
+  
+  # Supabase
+  supabase_flutter: ^2.3.4
+  
+  # Storage & Persistence
+  shared_preferences: ^2.2.2
+  
+  # Location
+  geolocator: ^14.0.2
+  geocoding: ^4.0.0
+  flutter_map: ^8.2.2
+  latlong2: ^0.9.0
+  flutter_polyline_points: ^2.1.0
+  
+  # Text-to-Speech pour navigation vocale
+  flutter_tts: ^4.2.3
+  
+  # Image
+  image_picker: ^1.0.7
+  
+  # Audio Recording
+  record: ^6.1.2
+  path_provider: ^2.1.2
+  audioplayers: ^6.5.1
+  permission_handler: ^12.0.1
+  
+  # HTTP
+  http: ^1.2.0
+  
+  # Utils
+  intl: ^0.20.2
+  url_launcher: ^6.2.4
+  path: ^1.8.3
+
+  # Clustering pour flutter_map
+  flutter_map_marker_cluster: ^8.2.2
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  
+  # Code Generation
+  build_runner: ^2.4.8
+  riverpod_generator: ^2.3.9
+  injectable_generator: ^2.4.1
+  freezed: ^2.4.7
+  freezed_annotation: ^2.4.1
+  json_serializable: ^6.7.1
+  
+  # Testing
+  mockito: ^5.4.4
+  mocktail: ^1.0.3
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/

@@ -1,43 +1,87 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
 
-# dependencies
-node_modules/
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
 
-# Expo
-.expo/
-dist/
-web-build/
-expo-env.d.ts
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
 
-# Native
-.kotlin/
-*.orig.*
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Node modules (for tokse-admin)
+tokse-admin/node_modules/
+tokse-admin/dist/
+tokse-admin/.env
+tokse-admin/.env.local
+tokse-admin/.env.production.local
+tokse-admin/.env.development.local
+
+# Environment variables (IMPORTANT - Never commit these!)
+.env
+.env.local
+.env.production
+.env.development
+lib/core/config/supabase_config.dart
+**/tokse-admin/.env
+
+# Database dumps
+*.sql.backup
+*.dump
+
+# IDE
+.vscode/
+*.code-workspace
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Native files
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
-
-# Metro
-.metro-health-check*
-
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-
-# macOS
-.DS_Store
 *.pem
-
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-app-example
-
-# generated native folders
-/ios
-/android

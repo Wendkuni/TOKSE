@@ -1,0 +1,20 @@
+/// Configuration Supabase
+/// 
+/// IMPORTANT: Ce fichier est un exemple.
+/// 1. Copiez ce fichier et renommez-le en 'supabase_config.dart'
+/// 2. Remplacez les valeurs par vos propres clés Supabase
+/// 3. JAMAIS commiter le fichier supabase_config.dart dans Git!
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class SupabaseConfig {
+  static const String supabaseUrl = 'https://votre-projet.supabase.co';
+  static const String supabaseAnonKey = 'votre-cle-anon-key-ici';
+
+  static Future<void> initialize() async {
+    await Supabase.initialize(
+      url: supabaseUrl,
+      anonKey: supabaseAnonKey,
+    );
+  }
+}

@@ -1,0 +1,562 @@
+import 'package:flutter/material.dart';
+
+import '../../../auth/data/repositories/auth_repository.dart';
+import '../../data/models/signalement_model.dart';
+import '../../data/repositories/signalements_repository.dart';
+import '../widgets/signalement_card.dart';
+
+class FeedScreen extends StatefulWidget {
+  const FeedScreen({super.key});
+
+  @override
+  State<FeedScreen> createState() => _FeedScreenState();
+}
+
+class _FeedScreenState extends State<FeedScreen> {
+  final SignalementsRepository _repository = SignalementsRepository();
+  final AuthRepository _authRepository = AuthRepository();
+
+  final List<SignalementModel> _signalements = [];
+  final Set<String> _userFelicitations = {};
+  final bool _isLoading = true;
+  String _selectedFilter = 'tout'; // tout, categorie, miens
+  String? _selectedCategory; // dechets, route, pollution, autre
+  String _viewMode = 'suivis'; // suivis, populaire
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredSignalements = _getFilteredAndSortedSignalements();
+    final currentUser = _authRepository.currentUser;
+
+    return Scaffold(
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Colors.white,
+        toolbarHeight: 0,
+      ),
+      body: Column(
+        children: [
+          // Barre de contrôles
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                // Bouton Suivis
+                Expanded(
+                  child: Material(
+                    color: _viewMode == 'suivis'
+                        ? const Color(0xFF1a73e8)
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                    child: InkWell(
+                      onTap: () => setState(() => _viewMode = 'suivis'),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Center(
+                          child: Text(
+                            'Suivis',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _viewMode == 'suivis'
+                                  ? Colors.white
+                                  : Colors.black54,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Bouton Populaire
+                Expanded(
+                  child: Material(
+                    color: _viewMode == 'populaire'
+                        ? const Color(0xFF1a73e8)
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                    child: InkWell(
+                      onTap: () => setState(() => _viewMode = 'populaire'),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Center(
+                          child: Text(
+                            'Populaire',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _viewMode == 'populaire'
+                                  ? Colors.white
+                                  : Colors.black54,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // ComboBox Trier par
+                Expanded(
+                  flex: 1,
+                  child: InkWell(
+                    onTap: () {
+                      final RenderBox button = context.findRenderObject() as RenderBox;
+                      final RenderBox overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+                      final RelativeRect position = RelativeRect.fromRect(
+                        Rect.fromPoints(
+                          button.localToGlobal(Offset.zero, ancestor: overlay),
+                          button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+                        ),
+                        Offset.zero & overlay.size,
+                      );
+
+                      showMenu(
+                        context: context,
+                        position: position,
+                        items: [
+                          PopupMenuItem(
+                            value: 'tout',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.all_inclusive, size: 20),
+                                const SizedBox(width: 12),
+                                const Text('Tout'),
+                                if (_selectedFilter == 'tout') ...
+                                  const Spacer(),
+                                  const Icon(Icons.check, color: Color(0xFF1a73e8), size: 20),
+                                ],
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'categorie',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.category, size: 20),
+                                const SizedBox(width: 12),
+                                const Text('Catégorie'),
+                                if (_selectedFilter == 'categorie') ...
+                                  const Spacer(),
+                                  const Icon(Icons.check, color: Color(0xFF1a73e8), size: 20),
+                                ],
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'miens',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person, size: 20),
+                                const SizedBox(width: 12),
+                                const Text('Les miens'),
+                                if (_selectedFilter == 'miens') ...
+                                  const Spacer(),
+                                  const Icon(Icons.check, color: Color(0xFF1a73e8), size: 20),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ).then((value) {
+                        if (value != null) {
+                          if (value == 'categorie') {
+                            _showCategorySelector();
+                          } else {
+                            setState(() {
+                              _selectedFilter = value;
+                              _selectedCategory = null;
+                            });
+                          }
+                        }
+                      });
+                    },
+                    child: Container(
+                      padding = const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      decoration = BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey[300]!),
+                      ),
+                      child = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Trier par',
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.grey,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _getFilterLabel(),
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const Icon(
+                                Icons.arrow_drop_down,
+                                size: 18,
+                                color: Colors.grey,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Liste des signalements
+          Expanded(
+            child = _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : filteredSignalements.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.inbox_outlined,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Aucun signalement',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _loadData,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: filteredSignalements.length,
+                          itemBuilder: (context, index) {
+                            final signalement = filteredSignalements[index];
+                            final isLiked = _userFelicitations.contains(signalement.id);
+                            final isOwner = currentUser?.id == signalement.userId;
+
+                            return SignalementCard(
+                              signalement: signalement,
+                              isLiked: isLiked,
+                              onTap: () {
+                                // TODO: Navigation vers détails
+                              },
+                              onFelicitate: () => _toggleFelicitation(signalement),
+                              isOwner: isOwner,
+                            );
+                          },
+                        ),
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Widget _buildCategoryOption(String value, String label, Color color) {
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _selectedCategory = value;
+          _selectedFilter = 'categorie';
+        });
+        Navigator.pop(context);
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _selectedCategory == value ? color.withOpacity(0.1) : Colors.grey[100],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _selectedCategory == value ? color : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Center(
+                child: Text(
+                  label.split(' ')[0],
+                  style: const TextStyle(fontSize: 20),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label.split(' ').skip(1).join(' '),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: _selectedCategory == value ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterModal() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Trier par',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 20),
+          ListTile(
+            leading: const Icon(Icons.all_inclusive),
+            title: const Text('Tout'),
+            trailing: _selectedFilter == 'tout'
+                ? const Icon(Icons.check, color: Color(0xFF1a73e8))
+                : null,
+            onTap: () {
+              setState(() {
+                _selectedFilter = 'tout';
+                _selectedCategory = null;
+              });
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.category),
+            title: const Text('Catégorie'),
+            trailing: _selectedFilter == 'categorie'
+                ? const Icon(Icons.check, color: Color(0xFF1a73e8))
+                : null,
+            onTap: () {
+              Navigator.pop(context);
+              _showCategorySelector();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.person),
+            title: const Text('Les miens'),
+            trailing: _selectedFilter == 'miens'
+                ? const Icon(Icons.check, color: Color(0xFF1a73e8))
+                : null,
+            onTap: () {
+              setState(() {
+                _selectedFilter = 'miens';
+                _selectedCategory = null;
+              });
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
+  List<SignalementModel> _getFilteredAndSortedSignalements() {
+    var filtered = List<SignalementModel>.from(_signalements);
+
+    // Filtrer selon le mode toolbar (Suivis = en cours seulement)
+    if (_viewMode == 'suivis') {
+      // Mode Suivis : afficher uniquement les signalements en cours (non résolus)
+      filtered = filtered.where((s) => s.etat != 'resolu').toList();
+    }
+
+    // Appliquer les filtres du ComboBox "Trier par"
+    if (_selectedFilter == 'miens') {
+      final currentUser = _authRepository.currentUser;
+      if (currentUser != null) {
+        filtered = filtered.where((s) => s.userId == currentUser.id).toList();
+      }
+    } else if (_selectedFilter == 'categorie' && _selectedCategory != null) {
+      filtered = filtered.where((s) => s.categorie == _selectedCategory).toList();
+    }
+
+    // Tri selon le mode toolbar
+    if (_viewMode == 'populaire') {
+      // En mode populaire, trier par nombre de félicitations décroissant
+      filtered.sort((a, b) => b.felicitations.compareTo(a.felicitations));
+    } else {
+      // En mode suivis, trier par date (plus récent d'abord)
+      filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+
+    return filtered;
+  }
+
+  String _getFilterLabel() {
+    if (_selectedFilter == 'miens') return 'Les miens';
+    if (_selectedFilter == 'categorie' && _selectedCategory != null) {
+      switch (_selectedCategory) {
+        case 'dechets':
+          return 'Déchets';
+        case 'route':
+          return 'Route';
+        case 'pollution':
+          return 'Pollution';
+        case 'autre':
+          return 'Autre';
+      }
+    }
+    return 'Tout';
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    try {
+      final felicitations = await _repository.getUserFelicitations();
+      final signalements = await _repository.getSignalements();
+      setState(() {
+        _userFelicitations = felicitations;
+        _signalements = signalements;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Erreur chargement données: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _showCategorySelector() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Choisir une catégorie',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildCategoryOption('dechets', '🗑️ Déchets', const Color(0xFFe74c3c)),
+            _buildCategoryOption('route', '🚧 Route dégradée', const Color(0xFFf39c12)),
+            _buildCategoryOption('pollution', '🏭 Pollution', const Color(0xFF9b59b6)),
+            _buildCategoryOption('autre', '📢 Autre', const Color(0xFF34495e)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleFelicitation(SignalementModel signalement) async {
+    final isLiked = _userFelicitations.contains(signalement.id);
+    try {
+      if (isLiked) {
+        await _repository.removeFelicitation(signalement.id);
+        setState(() {
+          _userFelicitations.remove(signalement.id);
+          final index = _signalements.indexWhere((s) => s.id == signalement.id);
+          if (index != -1) {
+            _signalements[index] = SignalementModel(
+              id: signalement.id,
+              userId: signalement.userId,
+              titre: signalement.titre,
+              description: signalement.description,
+              categorie: signalement.categorie,
+              photoUrl: signalement.photoUrl,
+              latitude: signalement.latitude,
+              longitude: signalement.longitude,
+              adresse: signalement.adresse,
+              etat: signalement.etat,
+              felicitations: signalement.felicitations - 1,
+              createdAt: signalement.createdAt,
+              updatedAt: signalement.updatedAt,
+              author: signalement.author,
+            );
+          }
+        });
+      } else {
+        await _repository.addFelicitation(signalement.id);
+        setState(() {
+          _userFelicitations.add(signalement.id);
+          final index = _signalements.indexWhere((s) => s.id == signalement.id);
+          if (index != -1) {
+            _signalements[index] = SignalementModel(
+              id: signalement.id,
+              userId: signalement.userId,
+              titre: signalement.titre,
+              description: signalement.description,
+              categorie: signalement.categorie,
+              photoUrl: signalement.photoUrl,
+              latitude: signalement.latitude,
+              longitude: signalement.longitude,
+              adresse: signalement.adresse,
+              etat: signalement.etat,
+              felicitations: signalement.felicitations + 1,
+              createdAt: signalement.createdAt,
+              updatedAt: signalement.updatedAt,
+              author: signalement.author,
+            );
+          }
+        });
+      }
+    } catch (e) {
+      print('Erreur félicitation: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Erreur lors de l\'action'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+}

@@ -1,0 +1,53 @@
+-- ============================================
+-- CRÉATION MANUELLE DE COMPTE SUPABASE AUTH POUR AUTORITÉ
+-- Date: 2025-12-19
+-- ============================================
+
+-- OPTION 1: Via Supabase Dashboard
+-- Allez dans Authentication → Users → Add user
+-- Créez le compte avec:
+-- - Email: (l'email de l'autorité)
+-- - Password: (le mot de passe que vous avez défini)
+-- - Confirm email: OUI
+-- - User metadata: {"role": "autorite_locale"} (ou autre role)
+
+-- OPTION 2: Via SQL (si vous avez le service_role_key)
+-- Remplacez les valeurs ci-dessous par celles de votre autorité
+
+-- Exemple:
+-- INSERT INTO auth.users (
+--   instance_id,
+--   id,
+--   email,
+--   encrypted_password,
+--   email_confirmed_at,
+--   created_at,
+--   updated_at,
+--   raw_app_meta_data,
+--   raw_user_meta_data,
+--   is_super_admin,
+--   role
+-- ) VALUES (
+--   '00000000-0000-0000-0000-000000000000',
+--   (SELECT id FROM users WHERE email = 'autorite@example.com'), -- ID de la table users
+--   'autorite@example.com',
+--   crypt('MotDePasse123', gen_salt('bf')), -- Remplacer par le vrai mot de passe
+--   NOW(),
+--   NOW(),
+--   NOW(),
+--   '{"provider":"email","providers":["email"]}',
+--   '{"role":"autorite_locale"}',
+--   FALSE,
+--   'authenticated'
+-- );
+
+-- ============================================
+-- INSTRUCTIONS
+-- ============================================
+-- 1. Récupérez l'email et le mot de passe de l'autorité depuis la table users
+-- 2. Allez dans Supabase Dashboard → Authentication → Users
+-- 3. Cliquez sur "Add user" (ou "Invite user")
+-- 4. Entrez l'email et le mot de passe
+-- 5. Cochez "Auto Confirm User"
+-- 6. Cliquez sur "Create user"
+-- 7. L'autorité pourra se connecter immédiatement
