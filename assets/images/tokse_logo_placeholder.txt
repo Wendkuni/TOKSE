@@ -1,0 +1,2 @@
+Placeholder pour le logo TOKSE original
+Le logo doit être placé dans: assets/images/tokse_logo.png
