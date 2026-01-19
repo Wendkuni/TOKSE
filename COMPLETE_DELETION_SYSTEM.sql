@@ -1,18 +1,69 @@
 -- ============================================
 -- SYSTÈME COMPLET DE SUPPRESSION DE COMPTE
--- Avec notifications admin et suppression automatique après 48h
+-- Avec notifications admin et suppression automatique après 2 semaines
 -- Date: 2025-12-30
 -- ============================================
+
+-- 0. SUPPRIMER LES ANCIENNES FONCTIONS (pour éviter les erreurs de type de retour)
+DROP FUNCTION IF EXISTS cancel_deletion_request(UUID);
+DROP FUNCTION IF EXISTS create_deletion_request(UUID);
+DROP FUNCTION IF EXISTS auto_delete_expired_accounts();
+DROP FUNCTION IF EXISTS admin_process_deletion_request(UUID, BOOLEAN);
+DROP FUNCTION IF EXISTS admin_process_reactivation_request(UUID, BOOLEAN);
+DROP FUNCTION IF EXISTS admin_toggle_account_status(UUID, BOOLEAN);
+DROP FUNCTION IF EXISTS notify_admins_on_deletion_request() CASCADE;
+DROP FUNCTION IF EXISTS notify_admins_on_reactivation_request() CASCADE;
 
 -- 1. Vérifier que la table account_deletion_requests existe
 -- (Normalement déjà créée par MIGRATION_DELETION_REQUESTS.sql)
 -- IMPORTANT: Utiliser account_deletion_requests (pas deletion_requests)
 
--- 2. Ajouter une politique pour que les admins voient toutes les demandes
+-- 2. Ajouter les politiques RLS pour account_deletion_requests
+
+-- Politique pour que les utilisateurs voient leurs propres demandes
+DROP POLICY IF EXISTS "Users can view own deletion requests" ON account_deletion_requests;
+CREATE POLICY "Users can view own deletion requests"
+  ON account_deletion_requests
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- Politique pour que les utilisateurs créent leurs propres demandes
+DROP POLICY IF EXISTS "Users can create deletion requests" ON account_deletion_requests;
+CREATE POLICY "Users can create deletion requests"
+  ON account_deletion_requests
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+-- Politique pour que les utilisateurs mettent à jour (annuler) leurs propres demandes
+DROP POLICY IF EXISTS "Users can update own deletion requests" ON account_deletion_requests;
+CREATE POLICY "Users can update own deletion requests"
+  ON account_deletion_requests
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Politique pour que les admins voient toutes les demandes
 DROP POLICY IF EXISTS "Admins can view all deletion requests" ON account_deletion_requests;
 CREATE POLICY "Admins can view all deletion requests"
   ON account_deletion_requests
   FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM users
+      WHERE users.id = auth.uid()
+      AND users.role IN ('admin', 'super_admin')
+    )
+  );
+
+-- Politique pour que les admins mettent à jour toutes les demandes
+DROP POLICY IF EXISTS "Admins can update all deletion requests" ON account_deletion_requests;
+CREATE POLICY "Admins can update all deletion requests"
+  ON account_deletion_requests
+  FOR UPDATE
   TO authenticated
   USING (
     EXISTS (
@@ -41,11 +92,10 @@ BEGIN
     SELECT id FROM users WHERE role IN ('admin', 'super_admin') AND is_active = true
   LOOP
     INSERT INTO notifications (
-      user_id,
+      authority_id,
       type,
-      titre,
+      title,
       message,
-      data,
       created_at
     ) VALUES (
       admin_record.id,
@@ -53,16 +103,14 @@ BEGIN
       'Demande de suppression de compte',
       'L''utilisateur ' || COALESCE(user_name, user_email) || ' (' || user_email || ') a demandé la suppression de son compte. La suppression automatique est prévue le ' || 
         TO_CHAR(NEW.deletion_scheduled_for, 'DD/MM/YYYY à HH24:MI') || '.',
-      jsonb_build_object(
-        'user_id', NEW.user_id,
-        'deletion_request_id', NEW.id,
-        'deletion_scheduled_for', NEW.deletion_scheduled_for,
-        'user_email', user_email
-      ),
       NOW()
     );
   END LOOP;
   
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Logger l'erreur mais ne pas bloquer la création de la demande
+  RAISE WARNING 'Erreur lors de la création des notifications: %', SQLERRM;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -75,7 +123,7 @@ CREATE TRIGGER trigger_notify_admins_deletion
   WHEN (NEW.status = 'pending')
   EXECUTE FUNCTION notify_admins_on_deletion_request();
 
--- 5. Créer une fonction pour supprimer automatiquement les comptes après 48h
+-- 5. Créer une fonction pour supprimer automatiquement les comptes après 2 semaines
 CREATE OR REPLACE FUNCTION auto_delete_expired_accounts()
 RETURNS void AS $$
 DECLARE
@@ -113,7 +161,7 @@ BEGIN
         created_at
       ) VALUES (
         'suppression_compte_auto',
-        'Suppression automatique du compte après 48h',
+        'Suppression automatique du compte après 2 semaines',
         jsonb_build_object(
           'user_id', request_record.user_id,
           'email', request_record.email,
@@ -151,16 +199,48 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Créer un endpoint dans Supabase Edge Functions:
 -- File: supabase/functions/auto-delete-accounts/index.ts
 
--- 8. Fonction pour permettre à l'utilisateur d'annuler sa demande
-CREATE OR REPLACE FUNCTION cancel_deletion_request(request_id UUID)
+-- 8. Fonction pour créer une demande de suppression (contourne RLS)
+CREATE OR REPLACE FUNCTION create_deletion_request(p_user_id UUID)
+RETURNS jsonb AS $$
+DECLARE
+  deletion_date TIMESTAMP WITH TIME ZONE;
+  request_id UUID;
+BEGIN
+  -- Vérifier qu'il n'y a pas déjà une demande pending
+  IF EXISTS (
+    SELECT 1 FROM account_deletion_requests 
+    WHERE user_id = p_user_id AND status = 'pending'
+  ) THEN
+    RAISE EXCEPTION 'Une demande de suppression est déjà en cours';
+  END IF;
+  
+  -- Calculer la date de suppression (2 semaines)
+  deletion_date := NOW() + INTERVAL '14 days';
+  
+  -- Créer la demande
+  INSERT INTO account_deletion_requests (user_id, deletion_scheduled_for, status)
+  VALUES (p_user_id, deletion_date, 'pending')
+  RETURNING id INTO request_id;
+  
+  -- Retourner les infos
+  RETURN jsonb_build_object(
+    'id', request_id,
+    'user_id', p_user_id,
+    'deletion_scheduled_for', deletion_date,
+    'status', 'pending'
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 9. Fonction pour permettre à l'utilisateur d'annuler sa demande
+CREATE OR REPLACE FUNCTION cancel_deletion_request(p_user_id UUID)
 RETURNS void AS $$
 BEGIN
   UPDATE account_deletion_requests
   SET 
     status = 'cancelled',
     cancelled_at = NOW()
-  WHERE id = request_id
-  AND user_id = auth.uid()
+  WHERE user_id = p_user_id
   AND status = 'pending';
   
   IF NOT FOUND THEN
@@ -283,6 +363,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_pending_reactivation_per_user
 -- RLS pour la table de réactivation
 ALTER TABLE account_reactivation_requests ENABLE ROW LEVEL SECURITY;
 
+-- Supprimer les anciennes politiques si elles existent
+DROP POLICY IF EXISTS "Users can view own reactivation requests" ON account_reactivation_requests;
+DROP POLICY IF EXISTS "Users can create reactivation requests" ON account_reactivation_requests;
+DROP POLICY IF EXISTS "Admins can view all reactivation requests" ON account_reactivation_requests;
+DROP POLICY IF EXISTS "Admins can update reactivation requests" ON account_reactivation_requests;
+
+-- Créer les nouvelles politiques
 CREATE POLICY "Users can view own reactivation requests"
   ON account_reactivation_requests FOR SELECT
   USING (auth.uid() = user_id);
@@ -332,26 +419,24 @@ BEGIN
     SELECT id FROM users WHERE role IN ('admin', 'super_admin') AND is_active = true
   LOOP
     INSERT INTO notifications (
-      user_id,
+      authority_id,
       type,
-      titre,
+      title,
       message,
-      data,
       created_at
     ) VALUES (
       admin_record.id,
       'account_reactivation_request',
       'Demande de réactivation de compte',
       'L''utilisateur ' || COALESCE(user_name, user_email) || ' (' || user_email || ') demande la réactivation de son compte.',
-      jsonb_build_object(
-        'user_id', NEW.user_id,
-        'reactivation_request_id', NEW.id,
-        'user_email', user_email
-      ),
       NOW()
     );
   END LOOP;
   
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Logger l'erreur mais ne pas bloquer la création de la demande
+  RAISE WARNING 'Erreur lors de la création des notifications: %', SQLERRM;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

@@ -13,7 +13,9 @@ import 'package:record/record.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/services/geocoding_service.dart';
+import '../../../../core/services/image_compression_service.dart';
 import '../../../../core/utils/error_handler.dart';
+import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../feed/data/repositories/signalements_repository.dart';
 
 class SignalementFormScreen extends StatefulWidget {
@@ -33,6 +35,7 @@ class _SignalementFormScreenState extends State<SignalementFormScreen> {
   final _titreController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _localisationController = TextEditingController();
+  final AuthRepository _authRepo = AuthRepository();
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -63,7 +66,9 @@ class _SignalementFormScreenState extends State<SignalementFormScreen> {
 
   Future<void> _checkDeletionRequest() async {
     try {
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      // Utiliser SharedPreferences comme dans profile_screen
+      final userId = await _authRepo.getStoredUserId();
+      print('🔴 DEBUG SignalementForm _checkDeletionRequest: userId = $userId');
       if (userId != null) {
         final response = await Supabase.instance.client
             .from('account_deletion_requests')
@@ -72,6 +77,7 @@ class _SignalementFormScreenState extends State<SignalementFormScreen> {
             .eq('status', 'pending')
             .maybeSingle();
 
+        print('🔴 DEBUG SignalementForm: response = $response');
         setState(() {
           _hasActiveDeletionRequest = response != null;
           _isCheckingDeletion = false;
@@ -87,7 +93,7 @@ class _SignalementFormScreenState extends State<SignalementFormScreen> {
         setState(() => _isCheckingDeletion = false);
       }
     } catch (e) {
-      print('Erreur vérification suppression: $e');
+      print('❌ Erreur vérification suppression: $e');
       setState(() => _isCheckingDeletion = false);
     }
   }
@@ -97,8 +103,8 @@ class _SignalementFormScreenState extends State<SignalementFormScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Icon(Icons.block, color: Colors.red, size: 28),
             SizedBox(width: 8),
             Expanded(
@@ -635,15 +641,72 @@ class _SignalementFormScreenState extends State<SignalementFormScreen> {
       final picker = ImagePicker();
       final image = await picker.pickImage(
         source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
+        // On prend l'image en haute qualité, la compression se fera après
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 100,
       );
 
       if (image != null) {
-        setState(() {
-          _imageFile = File(image.path);
-        });
+        // Afficher un indicateur de chargement pendant la compression
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Optimisation de l\'image...'),
+                ],
+              ),
+              duration: Duration(seconds: 2),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+
+        final originalFile = File(image.path);
+        final originalSize = await ImageCompressionService.getFormattedFileSize(originalFile);
+        print('📸 [IMAGE] Taille originale: $originalSize');
+
+        // Compresser l'image style WhatsApp (qualité medium = 70%)
+        final compressedFile = await ImageCompressionService.compressWithQuality(
+          originalFile,
+          CompressionQuality.medium,
+        );
+
+        if (compressedFile != null) {
+          final compressedSize = await ImageCompressionService.getFormattedFileSize(compressedFile);
+          print('✅ [IMAGE] Taille après compression: $compressedSize');
+          
+          setState(() {
+            _imageFile = compressedFile;
+          });
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ Image optimisée: $originalSize → $compressedSize'),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        } else {
+          // Si la compression échoue, utiliser l'image originale
+          print('⚠️ [IMAGE] Compression échouée, utilisation de l\'originale');
+          setState(() {
+            _imageFile = originalFile;
+          });
+        }
 
         // Récupérer automatiquement la géolocalisation
         await _getLocation();

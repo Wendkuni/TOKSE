@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:tokse_flutter/core/config/supabase_config.dart';
 import 'package:tokse_flutter/core/utils/error_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AgentLoginScreen extends StatefulWidget {
   const AgentLoginScreen({super.key});
@@ -100,6 +101,10 @@ class _AgentLoginScreenState extends State<AgentLoginScreen> {
       if (userResponse['autorite_id'] != null) {
         await prefs.setString('agent_autorite_id', userResponse['autorite_id']);
       }
+      
+      // Sauvegarder le profil pour le splash screen
+      await prefs.setString('user_profile_type', 'authority');
+      await prefs.setString('last_user_role', userResponse['role'] ?? 'agent');
 
       print('✅ [AGENT_LOGIN] Données sauvegardées');
       print('🚀 [AGENT_LOGIN] Navigation vers /authority-home');
@@ -352,6 +357,41 @@ class _AgentLoginScreenState extends State<AgentLoginScreen> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+
+                  // Footer AMIR TECH
+                  Padding(
+                    padding: const EdgeInsets.only(top: 60, bottom: 20),
+                    child: InkWell(
+                      onTap: () async {
+                        final Uri url = Uri.parse('https://amirtech.tech/');
+                        try {
+                          await launchUrl(url, mode: LaunchMode.externalApplication);
+                        } catch (e) {
+                          // Ignorer l'erreur
+                        }
+                      },
+                      child: RichText(
+                        textAlign: TextAlign.center,
+                        text: const TextSpan(
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white70,
+                          ),
+                          children: [
+                            TextSpan(text: 'Crafted And developed By '),
+                            TextSpan(
+                              text: 'AMIR TECH',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                decoration: TextDecoration.underline,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ],

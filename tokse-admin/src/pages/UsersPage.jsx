@@ -920,11 +920,22 @@ export const UsersPage = () => {
                   {selectedUser.signalements?.length > 0 ? (
                   <div className="space-y-3">
                     {selectedUser.signalements.map((sig) => (
-                      <div key={sig.id} className="p-3 bg-white rounded-lg border border-purple-300">
+                      <div key={sig.id} className={`p-3 bg-white rounded-lg border ${sig.deleted_by_user ? 'border-red-400 bg-red-50' : 'border-purple-300'}`}>
+                        {/* Étiquette de suppression par l'utilisateur */}
+                        {sig.deleted_by_user && (
+                          <div className="mb-2 p-2 bg-red-100 rounded-lg border border-red-300">
+                            <p className="text-xs font-semibold text-red-700">🗑️ Supprimé par l'utilisateur</p>
+                            {sig.deleted_at && (
+                              <p className="text-xs text-red-600">
+                                Le {format(new Date(sig.deleted_at), 'dd MMM yyyy à HH:mm', { locale: fr })}
+                              </p>
+                            )}
+                          </div>
+                        )}
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1">
-                            <p className="font-medium text-gray-900">{sig.titre}</p>
-                            <p className="text-sm text-gray-600 mt-1">{sig.description}</p>
+                            <p className={`font-medium ${sig.deleted_by_user ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{sig.titre}</p>
+                            <p className={`text-sm mt-1 ${sig.deleted_by_user ? 'text-gray-400' : 'text-gray-600'}`}>{sig.description}</p>
                             
                             {/* Photo du signalement */}
                             {sig.photo_url && (
@@ -964,6 +975,12 @@ export const UsersPage = () => {
                           </div>
                           
                           <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                            {/* Badge supprimé par l'utilisateur */}
+                            {sig.deleted_by_user && (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-300">
+                                🗑️ Supprimé
+                              </span>
+                            )}
                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
                               sig.etat === 'resolu' ? 'bg-green-100 text-green-700' :
                               sig.etat === 'en_cours' ? 'bg-yellow-100 text-yellow-700' :

@@ -551,9 +551,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
       final isAuth = await authRepo.isAuthenticated();
       
       if (!isAuth) {
-        // Non authentifié → Login
+        // Non authentifié → Sélection de profil
         if (mounted) {
-          context.go('/login');
+          context.go('/profile-selection');
         }
         return;
       }
@@ -562,7 +562,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
       final userId = await authRepo.getStoredUserId();
       if (userId == null) {
         if (mounted) {
-          context.go('/login');
+          context.go('/profile-selection');
         }
         return;
       }
@@ -576,6 +576,11 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
       
       final role = userResponse['role'] as String?;
       
+      // Sauvegarder le dernier rôle dans SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_user_role', role ?? 'citizen');
+      await prefs.setString('user_profile_type', role == 'citizen' || role == 'citoyen' || role == null ? 'citizen' : 'authority');
+      
       if (mounted) {
         // Navigation conditionnelle selon le rôle
         if (role == 'citizen' || role == 'citoyen' || role == null) {
@@ -588,7 +593,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     } catch (e) {
       print('❌ [SPLASH] Erreur lors de la vérification auth: $e');
       if (mounted) {
-        context.go('/login');
+        context.go('/profile-selection');
       }
     }
   }
@@ -598,10 +603,39 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     
     final hasAcceptedTerms = prefs.getBool('has_accepted_terms') ?? false;
     final profileType = prefs.getString('user_profile_type');
+    final userId = prefs.getString('tokse_user_id'); // Vérifier si vraiment connecté
     
     print('🔍 TOKSE DEBUG: Vérification première ouverture...');
     print('🔍 hasAcceptedTerms = $hasAcceptedTerms');
     print('🔍 profileType = $profileType');
+    print('🔍 userId = $userId');
+    
+    // IMPORTANT: Vérifier que l'utilisateur existe RÉELLEMENT dans la base de données
+    bool userExistsInDB = false;
+    if (userId != null && userId.isNotEmpty) {
+      try {
+        final response = await SupabaseConfig.client
+            .from('users')
+            .select('id')
+            .eq('id', userId)
+            .maybeSingle();
+        userExistsInDB = response != null;
+        print('🔍 userExistsInDB = $userExistsInDB');
+      } catch (e) {
+        print('❌ Erreur vérification utilisateur: $e');
+        userExistsInDB = false;
+      }
+    }
+    
+    // Si l'utilisateur n'existe pas dans la DB, nettoyer les SharedPreferences
+    if (!userExistsInDB && userId != null) {
+      print('🧹 Nettoyage des SharedPreferences - utilisateur inexistant');
+      await prefs.remove('tokse_user_id');
+      await prefs.remove('tokse_user_phone');
+      await prefs.remove('tokse_last_login');
+      await prefs.remove('user_profile_type');
+      await prefs.remove('last_user_role');
+    }
 
     if (!hasAcceptedTerms && mounted) {
       // Première ouverture : afficher le dialogue des conditions
@@ -663,13 +697,17 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
         ),
       );
     } else {
-      // Pas la première ouverture : vérifier si profil choisi
+      // Pas la première ouverture : vérifier si utilisateur vraiment connecté ET existe en DB
       if (mounted) {
-        if (profileType == null) {
-          // Profil jamais choisi → Afficher sélection
+        // IMPORTANT: Vérifier que l'utilisateur existe RÉELLEMENT dans la base de données
+        // Pas seulement dans SharedPreferences (qui peut persister après désinstallation)
+        if (!userExistsInDB) {
+          // Pas d'utilisateur connecté ou utilisateur n'existe plus → Afficher sélection de profil
+          print('➡️ Redirection vers profile-selection (utilisateur non connecté ou inexistant)');
           context.go('/profile-selection');
         } else {
-          // Profil déjà choisi → Vérifier auth
+          // Utilisateur connecté ET existe en DB → Vérifier auth et rediriger selon rôle
+          print('➡️ Utilisateur existe, vérification auth...');
           await _checkAuthAndNavigate();
         }
       }

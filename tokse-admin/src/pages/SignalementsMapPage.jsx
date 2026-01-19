@@ -118,7 +118,36 @@ L.Icon.Default.mergeOptions({
 });
 
 // Custom marker icons - NASA Style
-const getMarkerIcon = (statut) => {
+const getMarkerIcon = (statut, deletedByUser = false) => {
+  // Si supprimé par l'utilisateur, utiliser un style spécial
+  if (deletedByUser) {
+    return L.divIcon({
+      html: `
+        <div style="position: relative; width: 40px; height: 40px;">
+          <!-- Main marker circle - Grisé avec X -->
+          <div style="
+            position: absolute;
+            inset: 0;
+            width: 40px;
+            height: 40px;
+            background: #6b7280;
+            border-radius: 50%;
+            border: 3px solid #ef4444;
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            z-index: 2;
+            opacity: 0.7;
+          ">🗑️</div>
+        </div>
+      `,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+    });
+  }
+
   const styles = {
     en_attente: { 
       color: '#f59e0b', 
@@ -201,6 +230,7 @@ export const SignalementsMapPage = () => {
   const [filterType, setFilterType] = useState('all');
   const [filterLocation, setFilterLocation] = useState('all');
   const [dateRange, setDateRange] = useState('all');
+  const [showDeleted, setShowDeleted] = useState('all'); // 'all', 'active', 'deleted'
 
   useEffect(() => {
     fetchSignalements();
@@ -216,7 +246,7 @@ export const SignalementsMapPage = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [filterStatus, filterType, filterLocation, dateRange]);
+  }, [filterStatus, filterType, filterLocation, dateRange, showDeleted]);
 
   const fetchSignalements = async () => {
     try {
@@ -242,6 +272,14 @@ export const SignalementsMapPage = () => {
       if (filterLocation !== 'all') {
         query = query.ilike('adresse', `%${filterLocation}%`);
       }
+
+      // Filtre pour les signalements supprimés
+      if (showDeleted === 'active') {
+        query = query.or('deleted_by_user.is.null,deleted_by_user.eq.false');
+      } else if (showDeleted === 'deleted') {
+        query = query.eq('deleted_by_user', true);
+      }
+      // Si 'all', on ne filtre pas
 
       if (dateRange !== 'all') {
         const now = new Date();
@@ -419,6 +457,19 @@ export const SignalementsMapPage = () => {
               <option value="month">30 derniers jours</option>
             </select>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Visibilité</label>
+            <select
+              value={showDeleted}
+              onChange={(e) => setShowDeleted(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">Tous (actifs + supprimés)</option>
+              <option value="active">Actifs uniquement</option>
+              <option value="deleted">🗑️ Supprimés uniquement</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -454,7 +505,7 @@ export const SignalementsMapPage = () => {
                   <Marker
                     key={signalement.id}
                     position={[signalement.latitude, signalement.longitude]}
-                    icon={getMarkerIcon(signalement.etat)}
+                    icon={getMarkerIcon(signalement.etat, signalement.deleted_by_user)}
                   >
                     <Popup maxWidth={400} className="custom-popup">
                       <div className="p-4 min-w-[350px]">
@@ -464,9 +515,17 @@ export const SignalementsMapPage = () => {
                             <MapPin className="w-5 h-5 text-blue-600" />
                             <h3 className="font-bold text-lg text-gray-900">{signalement.titre}</h3>
                           </div>
-                          <span className={`inline-block text-xs px-3 py-1 rounded-full font-semibold ${getStatusColor(signalement.etat)}`}>
-                            {getStatusLabel(signalement.etat)}
-                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            <span className={`inline-block text-xs px-3 py-1 rounded-full font-semibold ${getStatusColor(signalement.etat)}`}>
+                              {getStatusLabel(signalement.etat)}
+                            </span>
+                            {/* Étiquette si supprimé par l'utilisateur */}
+                            {signalement.deleted_by_user && (
+                              <span className="inline-block text-xs px-3 py-1 rounded-full font-semibold bg-red-100 text-red-800 border border-red-300">
+                                🗑️ Supprimé par l'utilisateur
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Informations de l'utilisateur */}
@@ -539,6 +598,21 @@ export const SignalementsMapPage = () => {
                               <p className="text-xs text-gray-900 font-medium mt-1">{signalement.adresse}</p>
                             </div>
                           )}
+
+                          {/* Informations de suppression par l'utilisateur */}
+                          {signalement.deleted_by_user && (
+                            <div className="p-2 bg-red-50 rounded border border-red-200">
+                              <span className="text-xs text-red-600 font-semibold">🗑️ Supprimé par l'utilisateur</span>
+                              {signalement.deleted_at && (
+                                <p className="text-xs text-red-500 mt-1">
+                                  Le {format(new Date(signalement.deleted_at), 'dd MMM yyyy à HH:mm', { locale: fr })}
+                                </p>
+                              )}
+                              {signalement.deletion_reason && (
+                                <p className="text-xs text-gray-600 mt-1 italic">{signalement.deletion_reason}</p>
+                              )}
+                            </div>
+                          )}
                           
                           <div className="pt-2 border-t border-gray-200">
                             <span className="text-xs text-gray-500">
@@ -590,6 +664,16 @@ export const SignalementsMapPage = () => {
             <div>
               <div className="text-sm font-semibold text-gray-900">Résolu</div>
               <div className="text-xs text-gray-600">Mission accomplie</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative w-10 h-10">
+              <div className="absolute inset-0 w-10 h-10 bg-gray-500 rounded-full border-3 border-red-500 shadow-lg opacity-70" style={{ boxShadow: '0 0 15px rgba(239, 68, 68, 0.6)' }}></div>
+              <div className="absolute inset-0 flex items-center justify-center text-lg">🗑️</div>
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-gray-900">Supprimé</div>
+              <div className="text-xs text-gray-600">Par l'utilisateur</div>
             </div>
           </div>
         </div>

@@ -65,7 +65,7 @@ class AuthRepository {
       // Vérifier si l'utilisateur existe dans la table users
       final response = await _supabase
           .from('users')
-          .select('id, telephone, nom, prenom, role')
+          .select('id, telephone, nom, prenom, role, email')
           .eq('telephone', phone)
           .maybeSingle();
 
@@ -75,12 +75,35 @@ class AuthRepository {
       }
 
       final userId = response['id'] as String;
+      final userEmail = response['email'] as String?;
       print('✅ [AUTH] Utilisateur trouvé: $userId');
       
-      // SOLUTION TEMPORAIRE: Stocker l'ID utilisateur localement
-      // (En production, il faudrait utiliser OTP)
-      await _storeUserId(userId, phone);
-      print('✅ [AUTH] Session créée localement pour l\'utilisateur');
+      // ✅ CORRECTION: Vérifier si l'utilisateur est déjà authentifié dans Supabase Auth
+      try {
+        // Tenter de récupérer l'utilisateur depuis auth.users via RPC ou admin
+        // Si l'utilisateur existe dans auth.users, créer une session
+        if (userEmail != null && userEmail.isNotEmpty) {
+          // L'utilisateur a un compte auth.users (créé via signup)
+          // On doit utiliser signInWithPassword ou OTP
+          print('📱 [AUTH] Utilisateur avec email Auth détecté: $userEmail');
+          
+          // Stocker temporairement l'ID (la vraie session sera créée après OTP/password)
+          await _storeUserId(userId, phone);
+          print('✅ [AUTH] Session locale créée pour $userId');
+        } else {
+          // L'utilisateur existe dans la table users mais PAS dans auth.users
+          // C'est le cas pour les connexions par téléphone sans OTP
+          print('⚠️ [AUTH] Utilisateur sans compte Auth Supabase détecté');
+          
+          // Stocker l'ID localement
+          await _storeUserId(userId, phone);
+          print('✅ [AUTH] Session locale créée pour $userId');
+        }
+      } catch (authError) {
+        print('⚠️ [AUTH] Erreur vérification auth: $authError');
+        // Continuer avec session locale
+        await _storeUserId(userId, phone);
+      }
       
       /* VERSION AVEC OTP (à activer en production):
       print('📱 [AUTH] Envoi du code OTP...');

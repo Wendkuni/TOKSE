@@ -99,7 +99,7 @@ class SignalementsRepository {
         'audio_url': audioUrl,
         'audio_duration': audioDuration?.inSeconds,
         'etat': 'en_attente', // etat au lieu de status
-        'felicitations': 0,
+        'felicitations': 1, // L'utilisateur reçoit 1 félicitation automatique pour avoir créé le signalement
       };
 
       print('📦 [REPO] Données à insérer:');
@@ -118,6 +118,19 @@ class SignalementsRepository {
 
       print('✅ [REPO] Signalement créé avec succès!');
       print('   Response: $response');
+
+      // Ajouter automatiquement la félicitation de l'utilisateur pour son propre signalement
+      final signalementId = response['id'];
+      try {
+        await _supabase.from('felicitations').insert({
+          'user_id': userId,
+          'signalement_id': signalementId,
+        });
+        print('✅ [REPO] Auto-félicitation ajoutée');
+      } catch (e) {
+        print('⚠️ [REPO] Erreur auto-félicitation (ignorée): $e');
+        // On ignore l'erreur car ce n'est pas critique
+      }
 
       return SignalementModel.fromJson(response);
     } catch (e) {
@@ -152,7 +165,7 @@ class SignalementsRepository {
     }
   }
 
-  // Récupérer tous les signalements avec les profils des auteurs
+  // Récupérer tous les signalements avec les profils des auteurs (exclut les supprimés)
   Future<List<SignalementModel>> getSignalements() async {
     try {
       print('🔵 [FEED] Début chargement signalements...');
@@ -161,6 +174,7 @@ class SignalementsRepository {
       final response = await _supabase
           .from('signalements')
           .select('*, users!signalements_user_id_fkey(*)')
+          .or('deleted_by_user.is.null,deleted_by_user.eq.false') // Exclure les signalements supprimés
           .order('created_at', ascending: false);
 
       print('✅ [FEED] Signalements récupérés: ${(response as List).length}');
@@ -198,7 +212,7 @@ class SignalementsRepository {
     }
   }
 
-  // Récupérer les signalements de l'utilisateur connecté
+  // Récupérer les signalements de l'utilisateur connecté (exclut les supprimés)
   Future<List<SignalementModel>> getUserSignalements() async {
     try {
       String? userId =
@@ -209,6 +223,7 @@ class SignalementsRepository {
           .from('signalements')
           .select('*, users!signalements_user_id_fkey(*)')
           .eq('user_id', userId)
+          .or('deleted_by_user.is.null,deleted_by_user.eq.false') // Exclure les signalements supprimés
           .order('created_at', ascending: false);
 
       return (response as List)

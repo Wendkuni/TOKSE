@@ -468,13 +468,13 @@ class _AuthorityMapScreenState extends State<AuthorityMapScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      const Row(
                         children: [
-                          const Text(
+                          Text(
                             '⚡ ',
                             style: TextStyle(fontSize: 14),
                           ),
-                          const Text(
+                          Text(
                             'MISSION ACTIVE',
                             style: TextStyle(
                               color: Color(0xFFf59e0b),
@@ -1431,9 +1431,9 @@ class _AuthorityMapScreenState extends State<AuthorityMapScreen> {
                                 color: Color(0xFF1a73e8),
                               ),
                               const SizedBox(width: 4),
-                              Text(
+                              const Text(
                                 '🎙️ Message vocal',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                   color: Color(0xFF1a73e8),

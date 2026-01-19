@@ -27,8 +27,6 @@ class _AuthorityProfileScreenState extends State<AuthorityProfileScreen> {
   StreamSubscription<SignalementStateEvent>? _stateSubscription;
 
   bool _isLoading = true;
-  bool _locationEnabled = true;
-  bool _notificationsEnabled = true;
 
   Map<String, dynamic>? _userProfile;
   List<dynamic> _interventions = [];
@@ -257,48 +255,6 @@ class _AuthorityProfileScreenState extends State<AuthorityProfileScreen> {
 
                 const SizedBox(height: 24),
 
-                // Section : Paramètres
-                _buildSection(
-                  title: '⚙️ Paramètres',
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 16),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        SwitchListTile(
-                          title: const Text('Localisation'),
-                          subtitle:
-                              const Text('Activer le suivi en temps réel'),
-                          value: _locationEnabled,
-                          onChanged: _updateLocationSetting,
-                          secondary: const Icon(Icons.location_on),
-                        ),
-                        const Divider(height: 24),
-                        SwitchListTile(
-                          title: const Text('Notifications'),
-                          subtitle: const Text('Recevoir les alertes'),
-                          value: _notificationsEnabled,
-                          onChanged: _updateNotificationsSetting,
-                          secondary: const Icon(Icons.notifications),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
                 // Bouton Déconnexion
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -337,7 +293,6 @@ class _AuthorityProfileScreenState extends State<AuthorityProfileScreen> {
   void initState() {
     super.initState();
     _loadData();
-    _loadSettings();
     _setupRealtimeListener();
     _setupStateListener();
   }
@@ -710,55 +665,79 @@ class _AuthorityProfileScreenState extends State<AuthorityProfileScreen> {
   }
 
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+    // Ne pas bloquer si déjà en chargement
+    if (!_isLoading) {
+      setState(() => _isLoading = true);
+    }
 
     try {
-      final userId = await _authRepo.getStoredUserId();
+      // Récupérer l'ID utilisateur rapidement (d'abord Supabase, sinon SharedPreferences)
+      String? userId = _supabase.auth.currentUser?.id;
+      
       if (userId == null) {
-        throw Exception('User ID non trouvé');
+        // Fallback sur SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        userId = prefs.getString('tokse_user_id');
+      }
+      
+      if (userId == null) {
+        print('❌ [AUTHORITY_PROFILE] User ID non trouvé');
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+        return;
       }
 
-      print(
-          '🔍 [AUTHORITY_PROFILE] Chargement des données pour userId: $userId');
+      print('🔍 [AUTHORITY_PROFILE] Chargement des données pour userId: $userId');
 
-      // Charger le profil utilisateur
-      final userResponse =
-          await _supabase.from('users').select('*').eq('id', userId).single();
+      // Charger le profil ET les interventions EN PARALLÈLE avec timeout
+      final results = await Future.wait([
+        _supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single()
+            .timeout(const Duration(seconds: 10)),
+        _supabase
+            .from('signalements')
+            .select('*')
+            .eq('assigned_to', userId)
+            .eq('etat', 'resolu')
+            .order('created_at', ascending: false)
+            .limit(50)
+            .timeout(const Duration(seconds: 10)),
+      ]);
+
+      final userResponse = results[0] as Map<String, dynamic>;
+      final signalementsResponse = results[1] as List;
 
       print('✅ [AUTHORITY_PROFILE] Profil chargé: ${userResponse['nom']}');
+      print('✅ [AUTHORITY_PROFILE] ${signalementsResponse.length} interventions trouvées');
 
-      // Charger les interventions (signalements résolus assignés à cette autorité)
-      // Utilise created_at comme tri par défaut pour plus de robustesse
-      final signalementsResponse = await _supabase
-          .from('signalements')
-          .select('*')
-          .eq('assigned_to', userId)
-          .eq('etat', 'resolu')
-          .order('created_at', ascending: false)
-          .limit(50);
-
-      print(
-          '✅ [AUTHORITY_PROFILE] ${(signalementsResponse as List).length} interventions trouvées');
-      print(
-          '📋 [AUTHORITY_PROFILE] Interventions: ${signalementsResponse.map((s) => s['id']).toList()}');
-
-      setState(() {
-        _userProfile = userResponse;
-        _interventions = signalementsResponse;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _userProfile = userResponse;
+          _interventions = signalementsResponse;
+          _isLoading = false;
+        });
+      }
+    } on TimeoutException {
+      print('⏰ [AUTHORITY_PROFILE] Timeout - chargement trop long');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Chargement lent, veuillez réessayer'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     } catch (e) {
       print('❌ [AUTHORITY_PROFILE] Erreur: $e');
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
-  }
-
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _locationEnabled = prefs.getBool('location_enabled') ?? true;
-      _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
-    });
   }
 
   Future<void> _logout() async {
@@ -791,17 +770,5 @@ class _AuthorityProfileScreenState extends State<AuthorityProfileScreen> {
         context.go('/agent-login');
       }
     }
-  }
-
-  Future<void> _updateLocationSetting(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('location_enabled', value);
-    setState(() => _locationEnabled = value);
-  }
-
-  Future<void> _updateNotificationsSetting(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('notifications_enabled', value);
-    setState(() => _notificationsEnabled = value);
   }
 }

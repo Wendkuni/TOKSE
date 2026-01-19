@@ -1,7 +1,5 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/config/supabase_config.dart';
-import '../models/notification_model.dart';
 
 class NotificationsRepository {
   final _supabase = SupabaseConfig.client;

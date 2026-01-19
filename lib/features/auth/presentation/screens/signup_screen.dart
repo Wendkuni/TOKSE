@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/utils/error_handler.dart';
@@ -1146,6 +1147,11 @@ class _SignupScreenState extends State<SignupScreen> {
         phone: fullPhone,
         token: _otpController.text.trim(),
       );
+
+      // Sauvegarder le profil citoyen pour le splash screen
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_profile_type', 'citizen');
+      await prefs.setString('last_user_role', 'citizen');
 
       if (mounted) {
         _showSuccess('Inscription réussie !');

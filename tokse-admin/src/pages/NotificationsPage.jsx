@@ -1,16 +1,46 @@
 import { differenceInHours, format } from 'date-fns';
 import { fr } from 'date-fns/locale';
-import { AlertTriangle, Bell, CheckCircle, Clock, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { AlertTriangle, Bell, CheckCircle, Clock, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 export const NotificationsPage = () => {
   const [deletionRequests, setDeletionRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(5);
+
+  const fetchDeletionRequests = useCallback(async (showLoading = true) => {
+    try {
+      if (showLoading) setLoading(true);
+      const { data, error } = await supabase
+        .from('account_deletion_requests')
+        .select(`
+          *,
+          utilisateur:user_id(
+            id,
+            email,
+            nom,
+            prenom,
+            telephone
+          )
+        `)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setDeletionRequests(data || []);
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('Error fetching deletion requests:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchDeletionRequests();
@@ -18,51 +48,42 @@ export const NotificationsPage = () => {
     // Check for auto-deactivation every minute
     const interval = setInterval(checkAutoDeactivation, 60000);
 
-    // Real-time subscription
+    // Real-time subscription pour les changements
     const channel = supabase
-      .channel('deletion_requests')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'demandes_suppression' }, () => {
-        fetchDeletionRequests();
-      })
-      .subscribe();
+      .channel('deletion_requests_realtime')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'account_deletion_requests' 
+        }, 
+        (payload) => {
+          console.log('🔔 Realtime update:', payload);
+          // Rafraîchir sans afficher le loading
+          fetchDeletionRequests(false);
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Realtime status:', status);
+        setRealtimeStatus(status);
+      });
 
     return () => {
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, []);
-
-  const fetchDeletionRequests = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('demandes_suppression')
-        .select(`
-          *,
-          utilisateur:utilisateur_id(*)
-        `)
-        .eq('statut', 'en_attente')
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setDeletionRequests(data || []);
-    } catch (error) {
-      console.error('Error fetching deletion requests:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [fetchDeletionRequests]);
 
   const checkAutoDeactivation = async () => {
     try {
       const now = new Date();
       
       for (const request of deletionRequests) {
-        const requestDate = new Date(request.created_at);
+        const requestDate = new Date(request.requested_at);
         const hoursPassed = differenceInHours(now, requestDate);
         
-        if (hoursPassed >= 48 && request.statut === 'en_attente') {
-          await processDeactivation(request.utilisateur_id, true);
+        if (hoursPassed >= 48 && request.status === 'pending') {
+          await processDeactivation(request.user_id, true);
         }
       }
     } catch (error) {
@@ -74,10 +95,10 @@ export const NotificationsPage = () => {
     try {
       // Deactivate user
       const { error: updateError } = await supabase
-        .from('utilisateurs')
+        .from('users')
         .update({ 
-          est_actif: false,
-          date_desactivation: new Date().toISOString()
+          is_active: false,
+          updated_at: new Date().toISOString()
         })
         .eq('id', userId);
 
@@ -85,14 +106,13 @@ export const NotificationsPage = () => {
 
       // Update deletion request status
       const { error: requestError } = await supabase
-        .from('demandes_suppression')
+        .from('account_deletion_requests')
         .update({ 
-          statut: 'traitee',
-          traite_par: isAuto ? 'systeme' : 'admin',
-          date_traitement: new Date().toISOString()
+          status: 'completed',
+          completed_at: new Date().toISOString()
         })
-        .eq('utilisateur_id', userId)
-        .eq('statut', 'en_attente');
+        .eq('user_id', userId)
+        .eq('status', 'pending');
 
       if (requestError) throw requestError;
 
@@ -104,7 +124,7 @@ export const NotificationsPage = () => {
         utilisateur_cible_id: userId,
         details: {
           raison: 'Demande de suppression de compte',
-          traitement: isAuto ? 'Automatique (48h écoulées)' : 'Manuel par admin',
+          traitement: isAuto ? 'Automatique (2 semaines écoulées)' : 'Manuel par admin',
           timestamp: new Date().toISOString(),
         },
       });
@@ -120,10 +140,10 @@ export const NotificationsPage = () => {
   const cancelDeletionRequest = async (requestId, userId) => {
     try {
       const { error } = await supabase
-        .from('demandes_suppression')
+        .from('account_deletion_requests')
         .update({ 
-          statut: 'annulee',
-          date_traitement: new Date().toISOString()
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString()
         })
         .eq('id', requestId);
 
@@ -137,20 +157,21 @@ export const NotificationsPage = () => {
     }
   };
 
-  const getRemainingTime = (createdAt) => {
-    const requestDate = new Date(createdAt);
+  const getRemainingTime = (requestedAt) => {
+    const requestDate = new Date(requestedAt);
     const now = new Date();
     const hoursPassed = differenceInHours(now, requestDate);
-    const hoursRemaining = 48 - hoursPassed;
+    const hoursRemaining = 336 - hoursPassed; // 2 semaines = 14 jours = 336 heures
+    const daysRemaining = Math.floor(hoursRemaining / 24);
     
     if (hoursRemaining <= 0) {
       return { text: 'Délai expiré', color: 'text-red-600', urgent: true };
-    } else if (hoursRemaining <= 6) {
+    } else if (daysRemaining <= 1) {
       return { text: `${hoursRemaining}h restantes`, color: 'text-red-600', urgent: true };
-    } else if (hoursRemaining <= 24) {
-      return { text: `${hoursRemaining}h restantes`, color: 'text-orange-600', urgent: false };
+    } else if (daysRemaining <= 3) {
+      return { text: `${daysRemaining} jours restants`, color: 'text-orange-600', urgent: false };
     } else {
-      return { text: `${hoursRemaining}h restantes`, color: 'text-blue-600', urgent: false };
+      return { text: `${daysRemaining} jours restants`, color: 'text-blue-600', urgent: false };
     }
   };
 
@@ -176,7 +197,37 @@ export const NotificationsPage = () => {
               Demandes de suppression de compte en attente
             </p>
           </div>
+          {/* Status et refresh */}
+          <div className="flex items-center gap-3">
+            {/* Indicateur Realtime */}
+            <div className="flex items-center gap-2 text-sm">
+              <div className={`w-2 h-2 rounded-full ${
+                realtimeStatus === 'SUBSCRIBED' ? 'bg-green-500' : 
+                realtimeStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+              }`} />
+              <span className="text-gray-500">
+                {realtimeStatus === 'SUBSCRIBED' ? 'Temps réel' : 
+                 realtimeStatus === 'connecting' ? 'Connexion...' : 'Déconnecté'}
+              </span>
+            </div>
+            {/* Bouton refresh */}
+            <button
+              onClick={() => fetchDeletionRequests(true)}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+              title="Rafraîchir"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Rafraîchir</span>
+            </button>
+          </div>
         </div>
+        {/* Dernière mise à jour */}
+        {lastUpdate && (
+          <div className="px-6 pb-3 text-xs text-gray-400">
+            Dernière mise à jour : {format(lastUpdate, 'HH:mm:ss', { locale: fr })}
+          </div>
+        )}
       </div>
 
       {/* Alert Banner */}
@@ -189,7 +240,7 @@ export const NotificationsPage = () => {
                 {deletionRequests.length} demande(s) de suppression en attente
               </p>
               <p className="text-sm text-gray-600 mt-1">
-                Les comptes seront automatiquement désactivés après 48h si aucune action n'est prise.
+                Les comptes seront automatiquement désactivés après 2 semaines si aucune action n'est prise.
               </p>
             </div>
           </div>
@@ -214,7 +265,7 @@ export const NotificationsPage = () => {
         <>
           <div className="space-y-4">
             {currentRequests.map((request) => {
-            const remainingTime = getRemainingTime(request.created_at);
+            const remainingTime = getRemainingTime(request.requested_at);
             
             return (
               <div
@@ -236,22 +287,22 @@ export const NotificationsPage = () => {
                         <span className="font-medium">Email:</span> {request.utilisateur?.email}
                       </p>
                       <p className="text-sm text-gray-600">
-                        <span className="font-medium">Téléphone:</span> {request.utilisateur?.numero_telephone}
+                        <span className="font-medium">Téléphone:</span> {request.utilisateur?.telephone}
                       </p>
                       
                       <div className="flex items-center gap-4 mt-4">
                         <div className="flex items-center gap-2 text-gray-600">
                           <Clock className="w-4 h-4" />
                           <span className="text-sm">
-                            {format(new Date(request.created_at), 'dd MMM yyyy à HH:mm', { locale: fr })}
+                            {format(new Date(request.requested_at), 'dd MMM yyyy à HH:mm', { locale: fr })}
                           </span>
                         </div>
                       </div>
                       
-                      {request.raison && (
+                      {request.reason && (
                         <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
                           <p className="text-sm text-gray-700">
-                            <span className="font-semibold">Raison :</span> {request.raison}
+                            <span className="font-semibold">Raison :</span> {request.reason}
                           </p>
                         </div>
                       )}
@@ -268,14 +319,14 @@ export const NotificationsPage = () => {
                     
                     <div className="flex gap-2 mt-4">
                       <button
-                        onClick={() => processDeactivation(request.utilisateur_id, false)}
+                        onClick={() => processDeactivation(request.user_id, false)}
                         className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors text-sm"
                       >
                         <Trash2 className="w-4 h-4" />
                         Désactiver
                       </button>
                       <button
-                        onClick={() => cancelDeletionRequest(request.id, request.utilisateur_id)}
+                        onClick={() => cancelDeletionRequest(request.id, request.user_id)}
                         className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors text-sm"
                       >
                         Annuler
@@ -421,11 +472,11 @@ export const NotificationsPage = () => {
           </li>
           <li className="flex items-start gap-2">
             <span className="font-semibold text-blue-600">4.</span>
-            <span>L'admin a 48h pour désactiver manuellement le compte</span>
+            <span>L'admin a 2 semaines pour désactiver manuellement le compte</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="font-semibold text-blue-600">5.</span>
-            <span>Après 48h → désactivation automatique du compte</span>
+            <span>Après 2 semaines → désactivation automatique du compte</span>
           </li>
           <li className="flex items-start gap-2 mt-4 pt-4 border-t border-gray-200">
             <span className="font-semibold text-orange-600">⚠️</span>

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/config/supabase_config.dart';
@@ -522,6 +523,11 @@ class _LoginScreenState extends State<LoginScreen> {
           .single();
       
       final role = userResponse['role'] as String?;
+      
+      // Sauvegarder le profil pour le splash screen
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_profile_type', role == 'citizen' || role == 'citoyen' || role == null ? 'citizen' : 'authority');
+      await prefs.setString('last_user_role', role ?? 'citizen');
       
       if (mounted) {
         _showSuccess('Connexion réussie !');

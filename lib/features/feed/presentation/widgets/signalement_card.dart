@@ -5,17 +5,21 @@ import '../../../signalement/domain/entities/signalement_entity.dart';
 class SignalementCard extends StatefulWidget {
   final SignalementEntity signalement;
   final bool isLiked;
+  final bool isPending; // Indique si une opération est en cours
   final VoidCallback onTap;
   final VoidCallback onFelicitate;
   final bool isOwner;
+  final VoidCallback? onDelete; // Nouveau callback pour suppression
 
   const SignalementCard({
     super.key,
     required this.signalement,
     required this.isLiked,
+    this.isPending = false,
     required this.onTap,
     required this.onFelicitate,
     this.isOwner = false,
+    this.onDelete,
   });
 
   @override
@@ -161,12 +165,41 @@ class _SignalementCardState extends State<SignalementCard> {
                         ),
                       ),
                       const Spacer(),
-                      if (widget.isOwner)
-                        IconButton(
+                      if (widget.isOwner && _canShowDeleteOption())
+                        PopupMenuButton<String>(
                           icon: const Icon(Icons.more_vert, size: 20),
-                          onPressed: () {
-                            // Menu éditer/supprimer
+                          onSelected: (value) {
+                            if (value == 'delete') {
+                              _showDeleteConfirmation(context);
+                            }
                           },
+                          itemBuilder: (context) => [
+                            PopupMenuItem<String>(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                  const SizedBox(width: 8),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Supprimer',
+                                        style: TextStyle(color: Colors.red),
+                                      ),
+                                      Text(
+                                        'Reste ${_getMinutesRemaining()} min',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                     ],
                   ),
@@ -205,9 +238,9 @@ class _SignalementCardState extends State<SignalementCard> {
                             color: Color(0xFF1a73e8),
                           ),
                           const SizedBox(width: 8),
-                          Text(
+                          const Text(
                             '🎙️ Message vocal',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                               color: Color(0xFF1a73e8),
@@ -288,11 +321,20 @@ class _SignalementCardState extends State<SignalementCard> {
                       // Bouton Félicitations avec icône certificat
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: widget.onFelicitate,
-                          icon: const Icon(
-                            Icons.verified,
-                            size: 20,
-                          ),
+                          onPressed: widget.isPending ? null : widget.onFelicitate,
+                          icon: widget.isPending
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.verified,
+                                  size: 20,
+                                ),
                           label: Text(
                             'Félicitations (${widget.signalement.felicitations})',
                             style: const TextStyle(
@@ -322,6 +364,122 @@ class _SignalementCardState extends State<SignalementCard> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Vérifie si l'option de suppression doit être affichée
+  /// Conditions: état = "en_attente" ET moins d'1 heure depuis la création
+  bool _canShowDeleteOption() {
+    // Vérifier l'état
+    if (widget.signalement.etat != 'en_attente') {
+      return false;
+    }
+    
+    // Vérifier le temps écoulé (moins d'1 heure)
+    final minutesSinceCreation = DateTime.now()
+        .difference(widget.signalement.createdAt)
+        .inMinutes;
+    
+    return minutesSinceCreation < 60;
+  }
+  
+  /// Retourne le nombre de minutes restantes pour supprimer
+  int _getMinutesRemaining() {
+    final minutesSinceCreation = DateTime.now()
+        .difference(widget.signalement.createdAt)
+        .inMinutes;
+    return (60 - minutesSinceCreation).clamp(0, 60);
+  }
+  
+  /// Affiche le dialogue de confirmation de suppression
+  void _showDeleteConfirmation(BuildContext context) {
+    final minutesRemaining = _getMinutesRemaining();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.delete_forever,
+                color: Colors.red,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Supprimer ce signalement ?',
+                style: TextStyle(fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.timer, color: Colors.orange.shade700, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Il vous reste $minutesRemaining minutes pour supprimer ce signalement.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.orange.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Cette action est irréversible. Le signalement, ses photos et toutes les données associées seront définitivement supprimés.',
+              style: TextStyle(fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onDelete?.call();
+            },
+            icon: const Icon(Icons.delete, size: 18),
+            label: const Text('Supprimer'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

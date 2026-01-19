@@ -313,11 +313,13 @@ class _ProfileCardState extends State<_ProfileCard> with SingleTickerProviderSta
                           Text(
                             widget.subtitle,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 12,
                               fontWeight: FontWeight.w500,
                               color: Colors.white.withOpacity(0.9),
                               height: 1.2,
                             ),
+                            maxLines: 2,
+                            overflow: TextOverflow.visible,
                           ),
                           const SizedBox(height: 8),
                           Row(

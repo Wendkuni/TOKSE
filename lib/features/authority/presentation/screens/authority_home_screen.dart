@@ -446,10 +446,17 @@ class _AuthorityHomeScreenState extends State<AuthorityHomeScreen> {
 
   Future<void> _loadData() async {
     print('🔄 [AUTHORITY_HOME] Début _loadData');
-    setState(() => _isLoading = true);
+    
+    // Afficher le loading seulement si pas encore de données
+    if (_availableSignalements.isEmpty) {
+      setState(() => _isLoading = true);
+    }
+    
     try {
-      // Récupérer l'ID de l'autorité
-      final authorityId = await _authRepo.getStoredUserId();
+      // 1. Récupérer l'ID de l'autorité rapidement
+      String? authorityId = _supabase.auth.currentUser?.id;
+      authorityId ??= await _authRepo.getStoredUserId();
+      
       if (authorityId == null) {
         print('❌ [AUTHORITY_HOME] Autorité non authentifiée');
         setState(() => _isLoading = false);
@@ -459,31 +466,10 @@ class _AuthorityHomeScreenState extends State<AuthorityHomeScreen> {
       print('✅ [AUTHORITY_HOME] Autorité ID: $authorityId');
       _authorityId = authorityId;
 
-      // Notification désactivée : ne pas charger le nombre de notifications non lues
-      // final unreadCount = await _notificationsRepo.getUnreadCount();
-      // setState(() {
-      //   _unreadNotificationsCount = unreadCount;
-      // });
-      // print('🔔 [AUTHORITY_HOME] $unreadCount notifications non lues');
-
-      // Obtenir position actuelle (optionnel pour la distance)
-      print('📍 [AUTHORITY_HOME] Demande de position...');
-      final position = await _getCurrentPosition();
-      if (position != null) {
-        print(
-            '✅ [AUTHORITY_HOME] Position obtenue: ${position.latitude}, ${position.longitude}');
-        setState(() {
-          // FIGER la position initiale pour le calcul des distances
-          _initialPosition = position;
-        });
-        print('📌 [AUTHORITY_HOME] Position initiale figée pour calcul distance');
-      } else {
-        print('⚠️ [AUTHORITY_HOME] Position non disponible');
-      }
-
-      // Charger TOUS les signalements disponibles
-      print('🎯 [AUTHORITY_HOME] Chargement de tous les signalements...');
-      final allSignalements = await _signalementsRepo.getSignalements();
+      // 2. Charger les signalements EN PREMIER (sans attendre la position)
+      print('🎯 [AUTHORITY_HOME] Chargement des signalements...');
+      final allSignalements = await _signalementsRepo.getSignalements()
+          .timeout(const Duration(seconds: 8));
 
       // Filtrer : afficher tous les signalements actifs (en_attente OU en_cours)
       // SAUF ceux qui sont résolus
@@ -501,13 +487,10 @@ class _AuthorityHomeScreenState extends State<AuthorityHomeScreen> {
       print(
           '📋 [AUTHORITY_HOME] ${mySignalements.length} signalement(s) pris en charge par moi');
 
-      // Charger les stats (tous les signalements pour les statistiques)
-      print('📊 [AUTHORITY_HOME] Chargement stats...');
-
+      // 3. Calculer les stats
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
 
-      // Compte les signalements résolus PAR CETTE AUTORITÉ aujourd'hui
       final statsToday = allSignalements
           .where((s) =>
               s.etat == 'resolu' &&
@@ -524,9 +507,51 @@ class _AuthorityHomeScreenState extends State<AuthorityHomeScreen> {
       print(
           '📊 [AUTHORITY_HOME] Stats: Aujourd\'hui=$statsToday, EnCours=$statsEnCours, Résolus=$statsResolus');
 
-      // TRIER les signalements par distance (les plus proches en premier)
-      if (_initialPosition != null) {
-        availableSignalements.sort((a, b) {
+      // 4. Mettre à jour l'UI IMMÉDIATEMENT (sans attendre la position)
+      if (mounted) {
+        setState(() {
+          _availableSignalements = availableSignalements;
+          _mySignalements = mySignalements;
+          _signalementsToday = statsToday;
+          _signalementsEnCours = statsEnCours;
+          _signalementsResolus = statsResolus;
+          _isLoading = false;
+        });
+      }
+
+      print('✅ [AUTHORITY_HOME] Chargement des données terminé');
+
+      // 5. Obtenir la position EN ARRIÈRE-PLAN (ne bloque plus l'UI)
+      _loadPositionInBackground(availableSignalements);
+
+    } on TimeoutException {
+      print('⏰ [AUTHORITY_HOME] Timeout - chargement trop long');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      print('❌ [AUTHORITY_HOME] Erreur: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  /// Charge la position en arrière-plan et trie les signalements par distance
+  Future<void> _loadPositionInBackground(List<SignalementModel> signalements) async {
+    try {
+      print('📍 [AUTHORITY_HOME] Demande de position en arrière-plan...');
+      final position = await _getCurrentPosition();
+      
+      if (position != null && mounted) {
+        print('✅ [AUTHORITY_HOME] Position obtenue: ${position.latitude}, ${position.longitude}');
+        
+        // FIGER la position initiale pour le calcul des distances
+        _initialPosition = position;
+        
+        // Trier les signalements par distance
+        final sortedSignalements = List<SignalementModel>.from(_availableSignalements);
+        sortedSignalements.sort((a, b) {
           final distA = _getDistance(a);
           final distB = _getDistance(b);
           if (distA == null && distB == null) return 0;
@@ -534,24 +559,17 @@ class _AuthorityHomeScreenState extends State<AuthorityHomeScreen> {
           if (distB == null) return -1;
           return distA.compareTo(distB);
         });
-        print('✅ [AUTHORITY_HOME] Signalements triés par distance (plus proche en premier)');
+        
+        setState(() {
+          _availableSignalements = sortedSignalements;
+        });
+        
+        print('✅ [AUTHORITY_HOME] Signalements triés par distance');
+      } else {
+        print('⚠️ [AUTHORITY_HOME] Position non disponible');
       }
-
-      setState(() {
-        _availableSignalements = availableSignalements;
-        _mySignalements = mySignalements;
-        _signalementsToday = statsToday;
-        _signalementsEnCours = statsEnCours;
-        _signalementsResolus = statsResolus;
-        _isLoading = false;
-      });
-
-      print('✅ [AUTHORITY_HOME] Chargement terminé');
     } catch (e) {
-      print('❌ [AUTHORITY_HOME] Erreur: $e');
-      setState(() {
-        _isLoading = false;
-      });
+      print('⚠️ [AUTHORITY_HOME] Erreur position en arrière-plan: $e');
     }
   }
 

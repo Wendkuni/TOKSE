@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -19,7 +19,9 @@ import '../../../signalement/domain/entities/signalement_entity.dart';
 import '../../data/models/user_stats_model.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final VoidCallback? onDeletionRequestChanged;
+  
+  const ProfileScreen({super.key, this.onDeletionRequestChanged});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -383,6 +385,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _loadProfileData();
+    _checkDeletionRequest();  // AJOUTÉ: Vérifier la demande de suppression au démarrage
     _setupRealtimeListener();
     _setupStateListener();
   }
@@ -401,6 +404,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void dispose() {
     _stateSubscription?.cancel();
+    // Nettoyer les channels Supabase
+    _supabase.channel('felicitations_updates').unsubscribe();
+    _supabase.channel('deletion_requests_updates').unsubscribe();
     super.dispose();
   }
 
@@ -511,6 +517,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onTap: () {},
                         onFelicitate: () {},
                         isOwner: true,
+                        onDelete: () => _handleDeleteSignalement(signalement.id),
                       );
                     },
                   ),
@@ -683,8 +690,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: const [
+                  const Row(
+                    children: [
                       Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
                       SizedBox(width: 8),
                       Expanded(
@@ -805,6 +812,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 24),
           ],
 
+          const SizedBox(height: 16),
+
           // Bouton déconnexion
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -838,14 +847,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Center(
-                child: TextButton(
-                  onPressed: _handleDeleteAccount,
-                  child: const Text(
-                    'Supprimer mon compte',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey,
-                      decoration: TextDecoration.underline,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () async {
+                      print('🔴 DEBUG: Bouton supprimer cliqué via InkWell');
+                      await _handleDeleteAccount();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                      child: Text(
+                        'Supprimer mon compte',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -880,7 +898,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _checkDeletionRequest() async {
     try {
-      final userId = _authRepo.currentUser?.id;
+      // ✅ SOLUTION DIRECTE: Utiliser DIRECTEMENT tokse_user_id depuis SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      String? userId = prefs.getString('tokse_user_id');
+      
+      print('� DEBUG _checkDeletionRequest: userId depuis SharedPreferences = $userId');
+      
       if (userId != null) {
         final response = await _supabase
             .from('account_deletion_requests')
@@ -889,12 +912,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
             .eq('status', 'pending')
             .maybeSingle();
 
+        print('🔴 DEBUG _checkDeletionRequest: response = $response');
         if (response != null) {
           setState(() => _deletionRequest = response);
+          print('✅ DEBUG _checkDeletionRequest: _deletionRequest défini!');
+        } else {
+          setState(() => _deletionRequest = null);
+          print('⚪ DEBUG _checkDeletionRequest: Aucune demande pending');
         }
+        
+        // Notifier le parent (HomeScreen) du changement
+        widget.onDeletionRequestChanged?.call();
+      } else {
+        print('❌ DEBUG _checkDeletionRequest: tokse_user_id est NULL');
       }
     } catch (e) {
-      print('Erreur vérification suppression: $e');
+      print('❌ Erreur vérification suppression: $e');
     }
   }
 
@@ -920,14 +953,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (confirm == true && mounted) {
       try {
-        final userId = _authRepo.currentUser?.id;
+        // Utiliser la même méthode que _loadProfileData
+        final userId = await _authRepo.getStoredUserId();
         if (userId == null) return;
 
-        await _supabase
-            .from('account_deletion_requests')
-            .update({'status': 'cancelled'})
-            .eq('user_id', userId)
-            .eq('status', 'pending');
+        // Appeler la fonction SQL au lieu d'un UPDATE direct
+        await _supabase.rpc('cancel_deletion_request', params: {
+          'p_user_id': userId,
+        });
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -938,6 +971,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           );
           setState(() => _deletionRequest = null);
+          
+          // Notifier le parent (HomeScreen) du changement
+          widget.onDeletionRequestChanged?.call();
         }
       } catch (e) {
         if (mounted) {
@@ -945,6 +981,76 @@ class _ProfileScreenState extends State<ProfileScreen> {
             SnackBar(content: Text('Erreur: $e'), backgroundColor: Colors.red),
           );
         }
+      }
+    }
+  }
+
+  /// Supprime un signalement de l'utilisateur
+  /// Conditions: < 1h après création ET état = "en_attente"
+  Future<void> _handleDeleteSignalement(String signalementId) async {
+    try {
+      // Récupérer l'ID utilisateur
+      final userId = await _authRepo.getStoredUserId();
+      if (userId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Erreur: utilisateur non connecté'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Appeler la fonction RPC pour supprimer
+      final response = await _supabase.rpc(
+        'delete_user_signalement',
+        params: {
+          'p_signalement_id': signalementId,
+          'p_user_id': userId,
+        },
+      );
+
+      if (mounted) {
+        // Vérifier le résultat
+        if (response != null && response is List && response.isNotEmpty) {
+          final result = response[0];
+          if (result['success'] == true) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('✅ Signalement supprimé avec succès'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            // Recharger les données du profil
+            await _loadProfileData();
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('❌ ${result['message'] ?? 'Erreur lors de la suppression'}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Erreur inattendue lors de la suppression'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('❌ Erreur suppression signalement: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -973,7 +1079,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (confirm == true && mounted) {
       try {
-        final userId = _authRepo.currentUser?.id;
+        // Utiliser la même méthode que _loadProfileData
+        final userId = await _authRepo.getStoredUserId();
         if (userId == null) return;
 
         // Créer une demande de réactivation
@@ -1015,21 +1122,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _handleDeleteAccount() async {
+    print('🔴 DEBUG: _handleDeleteAccount appelée');
+    
+    if (!mounted) return;
+    
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('⚠️ Supprimer le compte'),
-        content:
-            const Text('Votre compte sera définitivement supprimé après 48h. '
-                'Pendant cette période, vous pouvez annuler la demande.\n\n'
-                'Continuer ?'),
+        content: const Text(
+          'Votre compte sera désactivé après 2 semaines.\n\n'
+          '⚠️ Pendant cette période :\n'
+          '• Vous ne pourrez plus créer de signalements\n'
+          '• Vous pouvez annuler la demande\n'
+          '• Un administrateur sera notifié\n\n'
+          'Continuer ?'
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.of(context).pop(false),
             child: const Text('Annuler'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.of(context).pop(true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Confirmer la suppression'),
           ),
@@ -1037,44 +1152,85 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
 
-    if (confirm == true && mounted) {
-      try {
-        final userId = _authRepo.currentUser?.id;
-        if (userId == null) return;
+    print('🔴 DEBUG: confirm = $confirm');
+    
+    if (confirm != true) {
+      print('🔴 DEBUG: Annulation par utilisateur');
+      return;
+    }
+    
+    if (!mounted) return;
 
-        final deletionDate = DateTime.now().add(const Duration(hours: 48));
-
-        await _supabase.from('account_deletion_requests').insert({
-          'user_id': userId,
-          'deletion_scheduled_for': deletionDate.toIso8601String(),
-          'status': 'pending',
-        });
-
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('✅ Demande validée'),
-              content: Text(
-                  'Votre compte sera supprimé le ${deletionDate.day}/${deletionDate.month}/${deletionDate.year} '
-                  'à ${deletionDate.hour}:${deletionDate.minute.toString().padLeft(2, '0')}.\n\n'
-                  'Vous pouvez annuler cette demande dans les paramètres.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'),
-                ),
-              ],
-            ),
-          );
-          await _checkDeletionRequest();
-        }
-      } catch (e) {
+    try {
+      // Utiliser la même méthode que _loadProfileData (SharedPreferences)
+      final userId = await _authRepo.getStoredUserId();
+      print('🔴 DEBUG: userId depuis SharedPreferences = $userId');
+      print('🔴 DEBUG: userId depuis _supabase.auth = ${_supabase.auth.currentUser?.id}');
+      print('🔴 DEBUG: _userProfile userId = ${_userProfile?['id']}');
+      
+      if (userId == null) {
+        print('❌ DEBUG: Pas d\'utilisateur connecté');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erreur: $e'), backgroundColor: Colors.red),
+            const SnackBar(
+              content: Text('Erreur: Utilisateur non connecté'),
+              backgroundColor: Colors.red,
+            ),
           );
         }
+        return;
+      }
+
+      print('🔴 DEBUG: Appel de la fonction create_deletion_request...');
+      
+      // Appeler la fonction SQL au lieu d'un INSERT direct (contourne RLS)
+      final response = await _supabase.rpc('create_deletion_request', params: {
+        'p_user_id': userId,
+      });
+      
+      print('✅ DEBUG: Fonction exécutée avec succès: $response');
+      
+      // Parser la réponse
+      final deletionDate = DateTime.parse(response['deletion_scheduled_for']);
+
+      if (!mounted) return;
+      
+      // Afficher le message de confirmation
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('✅ Demande validée'),
+          content: Text(
+            'Votre compte sera désactivé le ${deletionDate.day}/${deletionDate.month}/${deletionDate.year} '
+            'à ${deletionDate.hour}h${deletionDate.minute.toString().padLeft(2, '0')}.\n\n'
+            '⚠️ Vous ne pourrez plus créer de signalements.\n\n'
+            'Vous pouvez annuler cette demande à tout moment dans votre profil.'
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      
+      // Recharger les données pour afficher l'alerte rouge
+      if (mounted) {
+        await _checkDeletionRequest();
+      }
+    } catch (e, stackTrace) {
+      print('❌ DEBUG: Erreur complète = $e');
+      print('❌ DEBUG: Stack trace = $stackTrace');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
       }
     }
   }
@@ -1199,6 +1355,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
             print('🔔 [REALTIME] Félicitation mise à jour');
             // Recharger les stats quand une félicitation change
             _loadProfileData();
+          },
+        )
+        .subscribe();
+    
+    // Écouter les changements de demandes de suppression en temps réel
+    _supabase
+        .channel('deletion_requests_updates')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'account_deletion_requests',
+          callback: (payload) {
+            print('🔔 [REALTIME] Demande de suppression mise à jour: ${payload.eventType}');
+            // Revérifier la demande de suppression
+            _checkDeletionRequest();
           },
         )
         .subscribe();

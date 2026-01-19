@@ -31,6 +31,7 @@ class _SignalementDetailScreenState extends State<SignalementDetailScreen> {
   bool _isLoading = true;
   bool _isLiked = false;
   bool _isPlayingAudio = false;
+  bool _isProcessingFelicitation = false;
   Duration _audioDuration = Duration.zero;
   Duration _audioPosition = Duration.zero;
   String? _currentUserId;
@@ -786,10 +787,16 @@ class _SignalementDetailScreenState extends State<SignalementDetailScreen> {
 
   Future<void> _toggleFelicitation() async {
     if (_signalement == null) return;
+    
+    // Empêcher les doubles clics
+    if (_isProcessingFelicitation) return;
+    _isProcessingFelicitation = true;
 
     try {
       if (_isLiked) {
+        // D'abord appeler le serveur
         await _repository.removeFelicitation(_signalement!.id);
+        // Seulement si succès, mettre à jour l'UI
         setState(() {
           _isLiked = false;
           _signalement = SignalementModel(
@@ -812,7 +819,9 @@ class _SignalementDetailScreenState extends State<SignalementDetailScreen> {
           );
         });
       } else {
+        // D'abord appeler le serveur
         await _repository.addFelicitation(_signalement!.id);
+        // Seulement si succès, mettre à jour l'UI
         setState(() {
           _isLiked = true;
           _signalement = SignalementModel(
@@ -837,12 +846,20 @@ class _SignalementDetailScreenState extends State<SignalementDetailScreen> {
       }
     } catch (e) {
       print('Erreur félicitation: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Erreur lors de l\'action'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      // Ne pas montrer d'erreur si c'est un doublon (l'utilisateur a déjà félicité)
+      if (e.toString().contains('déjà félicité')) {
+        // Recharger les données pour avoir l'état correct
+        await _loadSignalement();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Erreur lors de l\'action'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      _isProcessingFelicitation = false;
     }
   }
 

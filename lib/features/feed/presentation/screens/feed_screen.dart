@@ -28,6 +28,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
   List<SignalementEntity> _signalements = [];
   Set<String> _userFelicitations = {};
+  final Set<String> _pendingFelicitations = {}; // Pour éviter les double-clics
   bool _isLoading = true;
   String? _currentUserId;
   String _selectedFilter = 'tout'; // tout, categorie, miens, etat
@@ -233,10 +234,13 @@ class _FeedScreenState extends State<FeedScreen> {
                                   _userFelicitations.contains(signalement.id);
                               final isOwner = _currentUserId != null &&
                                   _currentUserId == signalement.userId;
+                              final isPending =
+                                  _pendingFelicitations.contains(signalement.id);
 
                               return SignalementCard(
                                 signalement: signalement,
                                 isLiked: isLiked,
+                                isPending: isPending,
                                 onTap: () {
                                   context
                                       .push('/signalement/${signalement.id}');
@@ -636,19 +640,56 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Future<void> _toggleFelicitation(SignalementEntity signalement) async {
+    // Empêcher l'utilisateur de modifier la félicitation sur son propre signalement
+    // (il a déjà une auto-félicitation et ne peut ni l'enlever ni en ajouter une autre)
+    if (_currentUserId != null && _currentUserId == signalement.userId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Merci pour votre signalement ! 🎉'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Empêcher les double-clics
+    if (_pendingFelicitations.contains(signalement.id)) {
+      return;
+    }
+
     final isLiked = _userFelicitations.contains(signalement.id);
 
     AppLogger.debug('Toggle félicitation pour ${signalement.id}',
         tag: 'FeedScreen');
 
+    // Marquer comme en cours de traitement
+    setState(() {
+      _pendingFelicitations.add(signalement.id);
+    });
+
+    // Optimistic update : mettre à jour l'UI immédiatement
+    final originalFelicitations = Set<String>.from(_userFelicitations);
+    final originalSignalements = List<SignalementEntity>.from(_signalements);
+
     if (isLiked) {
-      // Retirer la félicitation
+      // Retirer la félicitation (optimistic)
+      setState(() {
+        _userFelicitations.remove(signalement.id);
+        _updateSignalementFelicitations(signalement.id, -1);
+      });
+
       final result = await _removeFelicitationUseCase.call(signalement.id);
 
       result.fold(
         (failure) {
           AppLogger.error('Erreur retrait félicitation: ${failure.message}',
               tag: 'FeedScreen');
+          // Rollback en cas d'erreur
+          setState(() {
+            _userFelicitations = originalFelicitations;
+            _signalements = originalSignalements;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Erreur: ${failure.message}'),
@@ -657,39 +698,27 @@ class _FeedScreenState extends State<FeedScreen> {
           );
         },
         (_) {
-          setState(() {
-            _userFelicitations.remove(signalement.id);
-            final index =
-                _signalements.indexWhere((s) => s.id == signalement.id);
-            if (index != -1) {
-              _signalements[index] = SignalementEntity(
-                id: signalement.id,
-                userId: signalement.userId,
-                titre: signalement.titre,
-                description: signalement.description,
-                categorie: signalement.categorie,
-                photoUrl: signalement.photoUrl,
-                latitude: signalement.latitude,
-                longitude: signalement.longitude,
-                adresse: signalement.adresse,
-                etat: signalement.etat,
-                felicitations: signalement.felicitations - 1,
-                createdAt: signalement.createdAt,
-                updatedAt: signalement.updatedAt,
-                author: signalement.author,
-              );
-            }
-          });
+          // Succès - l'UI est déjà à jour
         },
       );
     } else {
-      // Ajouter une félicitation
+      // Ajouter une félicitation (optimistic)
+      setState(() {
+        _userFelicitations.add(signalement.id);
+        _updateSignalementFelicitations(signalement.id, 1);
+      });
+
       final result = await _addFelicitationUseCase.call(signalement.id);
 
       result.fold(
         (failure) {
           AppLogger.error('Erreur ajout félicitation: ${failure.message}',
               tag: 'FeedScreen');
+          // Rollback en cas d'erreur
+          setState(() {
+            _userFelicitations = originalFelicitations;
+            _signalements = originalSignalements;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Erreur: ${failure.message}'),
@@ -698,30 +727,37 @@ class _FeedScreenState extends State<FeedScreen> {
           );
         },
         (_) {
-          setState(() {
-            _userFelicitations.add(signalement.id);
-            final index =
-                _signalements.indexWhere((s) => s.id == signalement.id);
-            if (index != -1) {
-              _signalements[index] = SignalementEntity(
-                id: signalement.id,
-                userId: signalement.userId,
-                titre: signalement.titre,
-                description: signalement.description,
-                categorie: signalement.categorie,
-                photoUrl: signalement.photoUrl,
-                latitude: signalement.latitude,
-                longitude: signalement.longitude,
-                adresse: signalement.adresse,
-                etat: signalement.etat,
-                felicitations: signalement.felicitations + 1,
-                createdAt: signalement.createdAt,
-                updatedAt: signalement.updatedAt,
-                author: signalement.author,
-              );
-            }
-          });
+          // Succès - l'UI est déjà à jour
         },
+      );
+    }
+
+    // Retirer du pending
+    setState(() {
+      _pendingFelicitations.remove(signalement.id);
+    });
+  }
+
+  /// Met à jour le compteur de félicitations d'un signalement localement
+  void _updateSignalementFelicitations(String signalementId, int delta) {
+    final index = _signalements.indexWhere((s) => s.id == signalementId);
+    if (index != -1) {
+      final signalement = _signalements[index];
+      _signalements[index] = SignalementEntity(
+        id: signalement.id,
+        userId: signalement.userId,
+        titre: signalement.titre,
+        description: signalement.description,
+        categorie: signalement.categorie,
+        photoUrl: signalement.photoUrl,
+        latitude: signalement.latitude,
+        longitude: signalement.longitude,
+        adresse: signalement.adresse,
+        etat: signalement.etat,
+        felicitations: (signalement.felicitations + delta).clamp(0, 999999),
+        createdAt: signalement.createdAt,
+        updatedAt: signalement.updatedAt,
+        author: signalement.author,
       );
     }
   }
