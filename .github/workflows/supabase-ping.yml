@@ -13,4 +13,4 @@ jobs:
         run: |
           curl -s \
           -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-          "https://TON_PROJECT_ID.supabase.co/rest/v1/NOM_TABLE?select=id&limit=1"
+          "https://xabqjsqcwyrasvwpxddq.supabase.co/rest/v1/account_deletion_requests?select=id&limit=1"
